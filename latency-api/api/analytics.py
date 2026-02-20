@@ -1,40 +1,30 @@
 import json
 import numpy as np
 import pandas as pd
-from fastapi import Request, Response
-from fastapi.responses import JSONResponse
 import os
 
-# Load the static JSON data (in real app, this might come from a DB/S3)
+# Load data at module level (faster)
 with open('q-vercel-latency.json', 'r') as f:
     raw_data = json.load(f)
-
-# Convert to DataFrame for easy stats (one row per ping)
 df = pd.DataFrame(raw_data)
 
-def handler(request: Request):
-    # Parse POST body
-    body = request.body()
-    if not body:
-        return JSONResponse({"error": "No body"}, status_code=400)
+def main(request):
+    # Handle CORS preflight
+    if request.method == 'OPTIONS':
+        return 200, {'Access-Control-Allow-Origin': '*'}
     
+    # Parse JSON body
     try:
-        data = json.loads(body)
-        regions = data.get("regions", [])
-        threshold_ms = data.get("threshold_ms", 180)
+        body = json.loads(request.body)
+        regions = body.get('regions', [])
+        threshold_ms = body.get('threshold_ms', 180)
     except:
-        return JSONResponse({"error": "Invalid JSON"}, status_code=400)
+        return 400, {'error': 'Invalid JSON'}
     
     if not regions:
-        return JSONResponse({"error": "No regions"}, status_code=400)
+        return 400, {'error': 'No regions'}
     
-    # Filter data for requested regions
-    region_data = df[df['region'].isin(regions)]
-    
-    if region_data.empty:
-        return JSONResponse({"error": "No data for regions"}, status_code=404)
-    
-    # Group by region and compute metrics
+    # Compute metrics per region
     results = {}
     for region in regions:
         region_df = df[df['region'] == region]
@@ -42,31 +32,18 @@ def handler(request: Request):
             results[region] = {"avg_latency": 0, "p95_latency": 0, "avg_uptime": 0, "breaches": 0}
             continue
         
-        latencies = region_df['latency_ms'].values
-        uptimes = region_df['uptime'].values  # assuming uptime is 0-1 or percentage
+        latencies = region_df['latency_ms'].dropna()
+        uptimes = region_df['uptime'].dropna()
         
         results[region] = {
             "avg_latency": float(np.mean(latencies)),
             "p95_latency": float(np.percentile(latencies, 95)),
             "avg_uptime": float(np.mean(uptimes)),
-            "breaches": int(np.sum(latencies > threshold_ms))
+            "breaches": int((latencies > threshold_ms).sum())
         }
     
-    # CORS headers for POST from anywhere
-    headers = {
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "POST, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type"
-    }
-    
-    return JSONResponse(results, headers=headers)
+    headers = {'Access-Control-Allow-Origin': '*'}
+    return 200, results
 
-# Vercel serverless handler
-def main(request: Request):
-    if request.method == "OPTIONS":
-        return Response(status_code=200, headers={
-            "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Methods": "POST, OPTIONS",
-            "Access-Control-Allow-Headers": "Content-Type"
-        })
-    return handler(request)
+# Vercel REQUIRED export name
+export = main
