@@ -1,0 +1,13 @@
+{
+  "functions": {
+    "api/analytics.py": {
+      "runtime": "python3.12"
+    }
+  },
+  "routes": [
+    {
+      "src": "/api/analytics",
+      "dest": "api/analytics.py"
+    }
+  ]
+}
